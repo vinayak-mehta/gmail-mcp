@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 
 import argparse
+import asyncio
 import base64
 import json
+import logging
 import os
 import sys
-import logging
-import asyncio
-from email.message import EmailMessage
-from email.header import decode_header
 from base64 import urlsafe_b64decode
 from email import message_from_bytes
+from email.header import decode_header
+from email.message import EmailMessage
 
+import mcp.server.stdio
+import mcp.types as types
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-
-from mcp.server.models import InitializationOptions
-import mcp.types as types
 from mcp.server import NotificationOptions, Server
-import mcp.server.stdio
+from mcp.server.models import InitializationOptions
 
 # Configure logging
 logging.basicConfig(
