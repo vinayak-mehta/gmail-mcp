@@ -6,11 +6,12 @@ build-backend = "setuptools.build_meta"
 name = "gmail-mcp"
 version = "0.1.0"
 description = "Gmail reader MCP tool for Claude"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 dependencies = [
     "google-api-python-client>=2.0.0",
     "google-auth-httplib2>=0.1.0",
     "google-auth-oauthlib>=0.4.0",
+    "httpx>=0.28.1",
     "mcp>=0.1.0",
 ]
 
