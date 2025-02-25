@@ -224,30 +224,90 @@ class GmailService:
 
 @mcp.tool()
 async def search_emails(
-    search_type: str, search_value: str, max_results: int = 10
+    search_type: str,
+    search_value: str,
+    max_results: int = 10,
+    page: int = 1,
 ) -> str:
     """Search for emails based on different criteria.
 
     Args:
         search_type: Type of search (keyword, to, from)
         search_value: Value to search for
-        max_results: Maximum number of results to return
+        max_results: Maximum number of results to return per page
+        page: Page number (1-based)
     """
-    global gmail_service  # Add this to access the global instance
+    global gmail_service
     if not gmail_service:
         return "Error: Gmail service not initialized"
 
     if not search_value:
         return "Error: Missing search value"
 
-    results = await gmail_service.search_email(search_type, search_value, max_results)
+    # Calculate offset based on page number
+    offset = (page - 1) * max_results
+
+    # Get all messages that match the query
+    all_messages = await gmail_service.list_messages(
+        query=search_value, max_results=None
+    )
+    total_results = len(all_messages)
+
+    # Slice messages for current page
+    page_messages = all_messages[offset : offset + max_results]
+
+    # Get only metadata for the current page
+    results = []
+    for msg in page_messages:
+        msg_details = await gmail_service.get_message(msg_id=msg["id"])
+        if msg_details:
+            # Only include metadata, not the full body
+            results.append(
+                {
+                    "id": msg_details["id"],
+                    "subject": msg_details["subject"],
+                    "sender": msg_details["sender"],
+                    "snippet": msg_details["snippet"],
+                }
+            )
+
+    has_next = total_results > offset + max_results
+    has_previous = page > 1
 
     return json.dumps(
         {
-            "message": f"Found {len(results)} emails matching your search",
+            "message": f"Found {total_results} emails matching your search (showing page {page})",
             "results": results,
+            "pagination": {
+                "current_page": page,
+                "total_pages": (total_results + max_results - 1) // max_results,
+                "has_next": has_next,
+                "has_previous": has_previous,
+                "total_results": total_results,
+            },
         }
     )
+
+
+@mcp.tool()
+async def get_email_content(msg_id: str) -> str:
+    """Get the full content of a specific email.
+
+    Args:
+        msg_id: Message ID to retrieve
+    """
+    global gmail_service
+    if not gmail_service:
+        return "Error: Gmail service not initialized"
+
+    if not msg_id:
+        return "Error: Missing message ID"
+
+    message = await gmail_service.get_message(msg_id=msg_id)
+    if not message:
+        return "Error: Could not retrieve message"
+
+    return json.dumps({"message": "Retrieved email content", "email": message})
 
 
 @mcp.tool()
