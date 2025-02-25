@@ -2,13 +2,15 @@
 
 import argparse
 import base64
-import email
 import json
 import os
 import sys
 import logging
 import asyncio
 from email.message import EmailMessage
+from email.header import decode_header
+from base64 import urlsafe_b64decode
+from email import message_from_bytes
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -22,12 +24,18 @@ from mcp.server import NotificationOptions, Server
 import mcp.server.stdio
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stderr)],
+)
 logger = logging.getLogger(__name__)
 
 # If modifying these scopes, delete the file token.json.
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly",
-          "https://www.googleapis.com/auth/gmail.modify"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+]
 
 EMAIL_ASSISTANT_PROMPTS = """You are a Gmail assistant.
 You can help with searching, reading, and managing emails.
@@ -52,58 +60,91 @@ PROMPTS = {
         description="Search for emails based on criteria",
         arguments=[
             types.PromptArgument(
-                name="query",
-                description="Search query string",
-                required=True
+                name="query", description="Search query string", required=True
             ),
             types.PromptArgument(
                 name="max_results",
                 description="Maximum number of results to return",
-                required=False
+                required=False,
             ),
         ],
     ),
 }
 
+
+def decode_mime_header(header: str) -> str:
+    """Helper function to decode encoded email headers"""
+
+    decoded_parts = decode_header(header)
+    decoded_string = ""
+    for part, encoding in decoded_parts:
+        if isinstance(part, bytes):
+            # Decode bytes to string using the specified encoding
+            decoded_string += part.decode(encoding or "utf-8")
+        else:
+            # Already a string
+            decoded_string += part
+    return decoded_string
+
+
 class GmailService:
-    def __init__(self, token_path="token.json"):
-        logger.info(f"Initializing GmailService with token path: {token_path}")
+    def __init__(self, creds_file_path="credentials.json", token_path="token.json"):
+        logger.info(f"Initializing GmailService with creds file: {creds_file_path}")
+        self.creds_file_path = creds_file_path
         self.token_path = token_path
-        self.service = self._get_gmail_service()
+        self.token = self._get_token()
+        logger.info("Token retrieved successfully")
+        self.service = self._get_service()
         logger.info("Gmail service initialized")
+        self.user_email = self._get_user_email()
+        logger.info(f"User email retrieved: {self.user_email}")
 
-    def _get_gmail_service(self):
-        """Initialize Gmail API service"""
-        creds = None
+    def _get_token(self) -> Credentials:
+        """Get or refresh Google API token"""
+        token = None
 
-        # The file token.json stores the user's access and refresh tokens
         if os.path.exists(self.token_path):
-            creds = Credentials.from_authorized_user_info(
-                json.loads(open(self.token_path, "r").read())
-            )
+            logger.info(f"Loading token from file: {self.token_path}")
+            token = Credentials.from_authorized_user_file(self.token_path, SCOPES)
 
-        # If there are no (valid) credentials available, let the user log in.
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+        if not token or not token.valid:
+            if token and token.expired and token.refresh_token:
+                logger.info("Refreshing token")
+                token.refresh(Request())
             else:
+                logger.info(
+                    f"Fetching new token using credentials from: {self.creds_file_path}"
+                )
                 try:
                     flow = InstalledAppFlow.from_client_secrets_file(
-                        "credentials.json", SCOPES
+                        self.creds_file_path, SCOPES
                     )
-                    creds = flow.run_local_server(port=0)
+                    token = flow.run_local_server(port=0)
                 except FileNotFoundError:
-                    logger.error("Error: credentials.json file not found!")
-                    print(
-                        "Please follow the setup instructions in the README to get your credentials.json file."
-                    )
-                    sys.exit(1)
+                    error_msg = f"Credentials file not found at: {self.creds_file_path}"
+                    logger.error(error_msg)
+                    raise FileNotFoundError(error_msg)
 
-            # Save the credentials for the next run
-            with open(self.token_path, "w") as token:
-                token.write(creds.to_json())
+            with open(self.token_path, "w") as token_file:
+                token_file.write(token.to_json())
+                logger.info(f"Token saved to {self.token_path}")
 
-        return build("gmail", "v1", credentials=creds)
+        return token
+
+    def _get_service(self) -> any:
+        """Initialize Gmail API service"""
+        try:
+            service = build("gmail", "v1", credentials=self.token)
+            return service
+        except HttpError as error:
+            logger.error(f"An error occurred building Gmail service: {error}")
+            raise ValueError(f"An error occurred: {error}")
+
+    def _get_user_email(self) -> str:
+        """Get user email address"""
+        profile = self.service.users().getProfile(userId="me").execute()
+        user_email = profile.get("emailAddress", "")
+        return user_email
 
     async def list_messages(self, user_id="me", query="", max_results=None):
         """List all Messages of the user's mailbox matching the query."""
@@ -127,9 +168,10 @@ class GmailService:
 
                 page_token = response["nextPageToken"]
                 response = await asyncio.to_thread(
-                    self.service.users().messages().list(
-                        userId=user_id, q=query, pageToken=page_token
-                    ).execute
+                    self.service.users()
+                    .messages()
+                    .list(userId=user_id, q=query, pageToken=page_token)
+                    .execute
                 )
 
                 if "messages" in response:
@@ -254,9 +296,13 @@ class GmailService:
         logger.info(f"Saved {len(emails)} emails to {filename}")
         return f"Saved {len(emails)} emails to {filename}"
 
-async def main(token_path="token.json"):
 
-    gmail_service = GmailService(token_path)
+async def main(creds_file_path: str, token_path: str):
+    logger.info(
+        f"Starting Gmail MCP server with creds: {creds_file_path}, token: {token_path}"
+    )
+
+    gmail_service = GmailService(creds_file_path, token_path)
     server = Server("gmail")
 
     @server.list_prompts()
@@ -278,7 +324,7 @@ async def main(token_path="token.json"):
                         content=types.TextContent(
                             type="text",
                             text=EMAIL_ASSISTANT_PROMPTS,
-                        )
+                        ),
                     )
                 ]
             )
@@ -296,8 +342,8 @@ async def main(token_path="token.json"):
                             text=f"""Please search for emails with the query: {query}
                             Limit results to: {max_results} emails.
 
-                            Use the search-emails tool to perform this search."""
-                        )
+                            Use the search-emails tool to perform this search.""",
+                        ),
                     )
                 ]
             )
@@ -385,7 +431,6 @@ async def main(token_path="token.json"):
     async def handle_call_tool(
         name: str, arguments: dict | None
     ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-
         if name == "search-emails":
             search_type = arguments.get("search_type", "keyword")
             search_value = arguments.get("search_value", "")
@@ -394,25 +439,33 @@ async def main(token_path="token.json"):
             if not search_value:
                 raise ValueError("Missing search_value parameter")
 
-            results = await gmail_service.search_email(search_type, search_value, max_results)
+            results = await gmail_service.search_email(
+                search_type, search_value, max_results
+            )
 
-            return [types.TextContent(
-                type="text",
-                text=f"Found {len(results)} emails matching your search",
-                artifact={"type": "json", "data": results}
-            )]
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Found {len(results)} emails matching your search",
+                    artifact={"type": "json", "data": results},
+                )
+            ]
 
         if name == "list-messages":
             query = arguments.get("query", "")
             max_results = arguments.get("max_results", None)
 
-            messages = await gmail_service.list_messages(query=query, max_results=max_results)
+            messages = await gmail_service.list_messages(
+                query=query, max_results=max_results
+            )
 
-            return [types.TextContent(
-                type="text",
-                text=f"Retrieved {len(messages)} messages",
-                artifact={"type": "json", "data": messages}
-            )]
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Retrieved {len(messages)} messages",
+                    artifact={"type": "json", "data": messages},
+                )
+            ]
 
         if name == "get-message":
             msg_id = arguments.get("msg_id")
@@ -421,11 +474,13 @@ async def main(token_path="token.json"):
 
             message = await gmail_service.get_message(msg_id=msg_id)
 
-            return [types.TextContent(
-                type="text",
-                text="Retrieved message details",
-                artifact={"type": "json", "data": message}
-            )]
+            return [
+                types.TextContent(
+                    type="text",
+                    text="Retrieved message details",
+                    artifact={"type": "json", "data": message},
+                )
+            ]
 
         if name == "save-emails":
             emails = arguments.get("emails", [])
@@ -442,7 +497,9 @@ async def main(token_path="token.json"):
             logger.error(f"Unknown tool: {name}")
             raise ValueError(f"Unknown tool: {name}")
 
+    logger.info("Setting up MCP stdio server...")
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+        logger.info("Starting MCP server...")
         await server.run(
             read_stream,
             write_stream,
@@ -455,12 +512,23 @@ async def main(token_path="token.json"):
                 ),
             ),
         )
+        logger.info("MCP server completed")
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Gmail MCP Server')
-    parser.add_argument('--token-path',
-                       default="token.json",
-                       help='File location to store and retrieve access token')
+    parser = argparse.ArgumentParser(description="Gmail MCP Server")
+    parser.add_argument(
+        "--creds-file-path",
+        default="credentials.json",
+        help="OAuth 2.0 credentials file path",
+    )
+    parser.add_argument(
+        "--token-path",
+        default="token.json",
+        help="File location to store and retrieve access token",
+    )
 
     args = parser.parse_args()
-    asyncio.run(main(args.token_path))
+
+    # This is the key part - using asyncio.run to properly handle async
+    asyncio.run(main(args.creds_file_path, args.token_path))

@@ -16,6 +16,3 @@ dependencies = [
 
 [project.scripts]
 gmail-mcp = "gmail_mcp.main:main"
-
-[tool.setuptools]
-packages = ["gmail_reader"]
