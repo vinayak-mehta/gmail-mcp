@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gmail-mcp"
+version = "0.1.0"
+description = "A command-line program to read and search emails from Gmail"
+readme = "README.md"
+authors = [
+    {name = "Vinayak Mehta", email = "vmehta94@gmail.com"}
+]
+license = {text = "MIT"}
+requires-python = ">=3.7"
+dependencies = [
+    "google-api-python-client>=2.0.0",
+    "google-auth-httplib2>=0.1.0",
+    "google-auth-oauthlib>=0.4.0",
+]
+
+[project.scripts]
+gmail-reader = "gmail_reader.gmail_reader:cli_main"
+
+[tool.setuptools]
+packages = ["gmail_reader"]
