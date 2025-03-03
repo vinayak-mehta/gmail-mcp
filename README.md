@@ -39,7 +39,7 @@ Add the Gmail MCP server to your Claude configuration file:
     "gmail": {
       "args": [
         "--from",
-        "https://github.com/vinayak-mehta/gmail-mcp",
+        "git+https://github.com/vinayak-mehta/gmail-mcp",
         "gmail-mcp"
       ],
       "command": "/Users/username/.local/bin/uvx",
