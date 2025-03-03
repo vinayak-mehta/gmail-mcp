@@ -1,105 +1,91 @@
-# Gmail Reader MCP
+# Gmail MCP
 
-A command-line program to read and search emails from your Gmail account.
+Allow Claude to search and retrieve emails from your Gmail account.
 
-## Features
+## Setup
 
-- Retrieve all emails from your Gmail account
-- Search emails by keyword
-- Search emails sent to a specific recipient
-- Search emails from a specific sender
-- Save search results to file
-- Progress tracking for large email collections
+### 1. Get Google API Credentials
 
-## Setup Instructions
+1. Visit the [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select an existing one
+3. Enable the Gmail API for your project
+   - Navigate to "APIs & Services" > "Library"
+   - Search for "Gmail API" and enable it
+4. Create OAuth credentials:
+   - Go to "APIs & Services" > "Credentials"
+   - Click "Create Credentials" > "OAuth client ID"
+   - Select "Desktop application" as the application type
+   - Name your client and click "Create"
+5. Download the credentials JSON file
+6. Save it as `credentials.json` in your project directory
 
-### 1. Create a Google Cloud Project and Enable Gmail API
+### 2. Authorize the Application
 
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/)
-2. Click "Create Project" or select an existing project
-3. In the search bar at the top, type "Gmail API" and select it from the results
-4. Click "Enable" to activate the Gmail API for your project
-
-### 2. Create OAuth 2.0 Credentials
-
-1. In your Google Cloud project, navigate to "APIs & Services" > "Credentials" in the left sidebar
-2. Click "Create Credentials" button and select "OAuth client ID"
-3. If prompted, configure the OAuth consent screen:
-   - Choose "External" as the User Type if you don't have a Google Workspace account
-   - Fill in the required fields (App name, User support email, Developer email)
-   - Add the Gmail API with ../auth/gmail.readonly scope
-   - Add your email as a test user
-   - Save and continue
-4. Go back to "Create OAuth client ID":
-   - Select "Desktop application" as the Application type
-   - Give your client a name
-   - Click "Create"
-5. Download the JSON file with your credentials
-6. Rename the downloaded file to `credentials.json`
-
-### 3. Install the Package with uv in Claude Desktop App
-
-#### Prerequisites
-- [uv](https://github.com/astral-sh/uv) - Fast Python package installer and resolver
-- Python 3.7 or higher
-
-#### Installation Steps
-
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/gmail-reader-mcp.git
-cd gmail-reader-mcp
-```
-
-2. Install the package using uv:
-```bash
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-uv pip install -e .
-```
-
-3. Place your `credentials.json` file in the project's root directory.
-
-## Usage
+Run the authorization command to generate your token:
 
 ```bash
-# Get ALL emails
-gmail-reader all
-
-# Search for emails with keyword
-gmail-reader keyword "important meeting"
-
-# Search for emails from a specific sender
-gmail-reader from "boss@company.com"
-
-# Search for emails you've sent to someone
-gmail-reader to "colleague@example.com"
-
-# Limit results and save to file
-gmail-reader keyword "meeting" --max 100 --save meeting_emails.txt
+uv run gmail-mcp auth --creds-path credentials.json --token-path token.json
 ```
 
-## First-Time Authentication
+This will open a browser window where you'll need to log in to your Google account and grant the necessary permissions. After authorization, a `token.json` file will be created in your project directory.
 
-The first time you run the program, it will:
+## Configuring with Claude
 
-1. Open a browser window
-2. Ask you to log in to your Google account
-3. Request permission to access your Gmail account
-4. After granting permission, you'll see an "Authentication successful" message
-5. The program will save a token file for future use
+Add the Gmail MCP server to your Claude configuration file:
 
-## Troubleshooting
+```
+{
+  "mcpServers": {
+    "gmail": {
+      "args": [
+        "--from",
+        "https://github.com/vinayak-mehta/gmail-mcp",
+        "gmail-mcp"
+      ],
+      "command": "/Users/username/.local/bin/uvx",
+      "env": {
+        "GMAIL_CREDS_PATH": "/Users/username/path/to/gmail-mcp/credentials.json",
+        "GMAIL_TOKEN_PATH": "/Users/username/path/to/gmail-mcp/token.json"
+      }
+    }
+  }
+}
+```
 
-### Token Issues
-If you encounter authentication issues, delete the `token.json` file and restart the program to reauthenticate.
+Make sure to:
 
-### Rate Limits
-The Gmail API has usage limits. If you hit a rate limit, wait a while before trying again.
+- Replace `/Users/username/path/to/gmail-mcp` with your actual project path
+- Adjust the `command` path to your installed `uvx` executable
+- Provide correct paths to your `credentials.json` and `token.json` files
 
-### Large Email Collections
-For accounts with many emails, retrieving all emails might take a significant amount of time. Use the `--max` option to limit results during testing.
+Claude will now have access to the following tools:
 
-## License
+### 1. Search Emails
 
-MIT
+Search for emails in your Gmail account.
+
+**Example prompt:**
+"Search for all emails from example@gmail.com"
+
+### 2. Get Email Content
+
+Retrieve the full content of a specific email.
+
+**Example prompt:**
+"Show me the full content of the email with the subject 'Meeting Tomorrow'"
+
+### 3. List Messages
+
+List recent messages from your Gmail inbox.
+
+**Example prompt:**
+"List my 5 most recent emails"
+
+## Environment Variables
+
+You can configure the paths to your credentials and token files using environment variables:
+
+- `GMAIL_CREDS_PATH`: Path to your credentials.json file
+- `GMAIL_TOKEN_PATH`: Path to your token.json file
+
+Create a `.env` file in the project root with these variables for easy configuration.
